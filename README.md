@@ -143,7 +143,112 @@ Con l’ambiente pronto (IdP di test in esecuzione e configurazione SP definita)
 si può implementare il flusso di login SPID all’interno dell’app Next.js SSR.
 L’approccio è quello tipico di un’app Express con Passport, adattato a Next.js (che utilizza API routes e pagine SSR):
 
-TODO
+1. **Inizializzazione middleware e strategy**:
+   Dobbiamo inizializzare Passport (o il middleware SPID scelto) con la configurazione del Service Provider.
+   Ad esempio, usando passport-spid possiamo creare una strategia SPID e registrarla su Passport:
+    ```javascript
+    const strategy = new SpidStrategy(spidConfig, (profile, done) => done(null, profile));
+    passport.use('spid', strategy);
+    ```
+   Questo prepara la strategia SAML in base a spidConfig e definisce il callback di verifica che,
+   in caso di login riuscito, riceve il profilo utente SPID (profile).
+   In questo caso di esempio, ci limitiamo a passare avanti il profilo (si potrebbe inserire logica per creare/collegare l’utente nel DB).
+   La strategia consente anche di generare i metadati SP del nostro servizio con `strategy.generateSpidServiceProviderMetadata()`
+   – utile per ottenere l’XML dei metadata da fornire agli IdP (es. da caricare spid-saml-check per i test).
+2. **Definizione delle route di autenticazione**: Servono almeno tre endpoint:
+     - Metadata: ad esempio /metadata: fornisce i metadati del Service Provider in XML.
+       Questo serve in ambiente di test o per federare l’SP con gli IdP.
+       Possiamo generare il contenuto via libreria e restituirlo. Esempio:
+     ```javascript
+     app.get('/metadata', (req, res) => {
+     res.type('text/xml');
+     res.send( metadataXML );
+     });
+     ```
+   (Dove `metadataXML` è ottenuto dalla libreria SPID usata, ad es. `strategy.generateSpidServiceProviderMetadata()`).
+   In Next.js potremmo implementare ciò in un API route (`pages/api/metadata.ts`) inviando il XML come risposta.
+     - Login (Inizio autenticazione): 
+       ad esempio `/login`: avvia il processo di login SPID. Quando l’utente naviga su questa URL
+       (es. cliccando “Login con SPID”), la nostra applicazione genera una AuthnRequest SAML e reindirizza l’utente all’Identity Provider selezionato.
+       Con Passport ciò avviene tramite passport.authenticate('spid'), che internamente produce la richiesta SAML (firmata) e la invia via redirect (Binding HTTP-Redirect o HTTP-POST).
+       Ad esempio, in Express:
+        ```javascript
+       app.get('/login', passport.authenticate('spid', { session: false }));
+        ```
+       In Next.js possiamo creare una pagina o API route `/api/login` che esegue la stessa logica di redirect.
+       Se abbiamo più IdP, è opportuno passare un parametro (come `entityID`) o avere diverse URL di login per ciascun IdP,
+       in modo da sapere verso quale IdP indirizzare.
+       Nella PoC, usando un singolo IdP test, possiamo configurare staticamente la strategy per usare quello (es. `getIDPEntityIdFromRequest` che ritorna l’URL dell’IdP di test, come visto sopra).
+       
+     - Assertion Consumer Service (ACS) / Callback – ad esempio `/acs` o `/login/callback`:
+       è l’endpoint che riceve la Response SAML dall’Identity Provider dopo il login.
+       Questo sarà tipicamente una HTTP POST contenente l’assertion SAML (e firma) inviata dall’IdP al nostro SP.
+       Dobbiamo configurare l’IdP di test affinché invii la response a questo endpoint (nei metadata SP
+       forniti all’IdP, l’ACS URL deve combaciare). Nella nostra app, questa route deve:
+        - **Accettare e processare i dati POST (SAMLResponse)**:  
+        In Express occorre abilitare il parser URL-encoded per leggere i campi del form.
+        In Next API Routes, bisogna assicurarsi di gestire il body (Next di default parse solo JSON;
+        si può disabilitare il parser integrato e usare ad es. `express.urlencoded()` tramite un middleware come next-connect).
+        - **Delegare a Passport/SAML la verifica della risposta SAML** (firma valida, issuer IdP valido, non replay, ecc.).
+        Con Passport ciò avviene chiamando di nuovo `passport.authenticate('spid')`  
+        su questa route, ma stavolta ricevendo il risultato della verifica: 
+         ```javascript
+        app.post('/login/callback', 
+        express.urlencoded({ extended: false }),            // parser form
+        passport.authenticate('spid', { session: false }),  // valida SAMLResponse
+        (req, res) => {
+        const user = req.user; // profilo utente SPID autenticato
+        // ... inizializzare sessione utente, redirect ...
+        res.redirect('/');
+        }
+        );
+        ```
+       Nell’esempio sopra, se l’autenticazione SAML ha successo, req.user conterrà il profilo SPID (es. nome, cognome, codice fiscale, etc.)
+       A questo punto si può considerare l’utente loggato; l’handler finale può creare una sessione applicativa per l’utente e reindirizzarlo ad una pagina interna (es. area riservata).
+       Nel PoC potremmo semplicemente inviare la risposta con i dati utente o settare un cookie e fare redirect.
+       Importante: session: false indica di non usare la sessione di Passport – gestiremo la sessione manualmente.
+
+       In Next.js, definiremo un’API route (es. pages/api/auth/spid-callback.ts) che svolge questi passi.
+       Utilizzare next-connect può facilitare le cose: questa libreria permette di definire middleware e handler simili a Express nelle API routes Next.
+       In pratica possiamo replicare la configurazione di Express dentro un handler Next.
+       Con next-connect potremmo quindi fare: 
+       ```javascript
+       import nextConnect from 'next-connect';
+       const apiRoute = nextConnect();
+       apiRoute.use(express.urlencoded({ extended: false }));
+       apiRoute.use(passport.initialize());
+       apiRoute.post(passport.authenticate('spid', { session: false }), (req, res) => {
+       // req.user disponibile qui se login ok
+       // ... creare sessione, fare redirect o inviare JSON ...
+       });
+       export default apiRoute;
+       export const config = { api: { bodyParser: false } }; // disabilita parser Next default
+       ```
+       Questo è un possibile schema: disabilitiamo il body parser predefinito di Next (per poter usare quello di express),
+       inizializziamo passport e usiamo la sua middleware sulla POST.
+       In alternativa, possiamo gestire manualmente la verifica SAML usando direttamente i metodi di
+       `passport-saml/node-saml` se non si vuole introdurre Express, ma è molto più complesso; per un PoC, l’approccio Express-like va bene.
+3. **Gestione della sessione utente post-login**:
+   Una volta autenticato con SPID, dobbiamo mantenere lo stato di login per le successive richieste dell’utente alla nostra app SSR.
+   In un’architettura Backend-for-Frontend (BFF) come Next SSR, la pratica comune è usare sessioni tramite cookie:
+   - Possiamo usare un cookie JWT contenente le informazioni utente (o un riferimento ad esse).
+     Ad esempio, al termine della route `/login/callback` generare un JWT firmato lato server con l’ID dell’utente 
+     o il fiscalNumber, e inviarlo come HttpOnly cookie al client (Set-Cookie).
+     Questo cookie verrà poi inviato da Next.js ad ogni richiesta SSR, permettendoci di identificare l’utente.
+     In deployment su AWS Lambda la memoria non può essere usata come sessione condivisa tra richieste
+     (ogni invocazione può avvenire su container differenti). Dunque, si potrebbe utilizzare  DynamoDB oppure MemoryDB 
+     per sessioni o semplici JWT cookies.
+4. **Protezione delle pagine SSR con sessione**:
+   Ora, con il cookie di sessione, possiamo far sì che le pagine Next.js SSR riconoscano l’utente loggato.
+   Potremmo:
+   Un file `_middleware.ts` (per il Pages Router) o `middleware.ts` (applicazione globale) 
+   può intercettare richieste in arrivo: controlla se esiste il cookie di sessione;
+   se non c’è e la pagina è protetta, esegue un redirect verso la pagina di login.
+   Se c’è, magari verifica/decodifica il token e continua la richiesta. Questo avviene a livello edge/Node andrà
+   configurato opportunamente.
+
+       
+
 
  
   
