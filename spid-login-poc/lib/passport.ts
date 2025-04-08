@@ -19,6 +19,17 @@ import path from 'path';
   - cache: Implementazione "dummy" della cache per le AuthnRequest. Ora include anche la funzione "delete".
 */
 
+// Configura l'IdP di test. Se utilizzi spid-saml-check, imposta l'entryPoint e il certificato fornito dallo strumento.
+// Assicurati di avere il file del certificato dell'IdP (ad esempio, "certs/spid-testidp.crt").
+// Puoi anche impostare queste variabili d'ambiente:
+// const idpTest = {
+//     entryPoint: process.env.SPID_IDP_ENTRYPOINT || "https://localhost:8443",
+//     cert: fs.readFileSync(path.join(process.cwd(), 'certs/spid-sp.crt'), 'utf8').toString(),
+// };
+
+const idp = 'https://localhost:8443';
+const idpMetadata = fs.readFileSync(path.join(process.cwd(), 'metadata/folder/spid-saml-check-metadata.xml'), 'utf8').toString();
+
 const spidConfig = {
     sp: {
         entityId: process.env.SPID_ENTITY_ID || "http://localhost:3000",
@@ -38,13 +49,14 @@ const spidConfig = {
             URL: process.env.SPID_ENTITY_ID || "http://localhost:3000"
         }
     },
-    idp: {},
+    // Configura l'IdP con il test IdP
+    // idp: { test: idpTest },
     saml: {
         callbackUrl: process.env.SPID_CALLBACK_URL || "http://localhost:3000/api/auth/spid-callback",
         authnRequestBinding: "HTTP-Redirect" as "HTTP-Redirect",
-        privateKey: fs.readFileSync(path.join(process.cwd(), 'certs/spid-sp.pem'), 'utf8'),
+        privateKey: fs.readFileSync(path.join(process.cwd(), 'certs/spid-sp.pem'), 'utf8').toString(),
         // Deve essere fornito come stringa
-        attributeConsumingServiceIndex: "0",
+        attributeConsumingServiceIndex: '0', // index of 'acs' array
         signatureAlgorithm: 'sha256' as "sha256",
         digestAlgorithm: 'sha256' as "sha256",
         logoutCallbackUrl: process.env.SPID_LOGOUT_CALLBACK_URL || "http://localhost:3000/api/auth/spid-logout-callback",
@@ -54,8 +66,8 @@ const spidConfig = {
         serviceProvider: {
             entityId: process.env.SPID_ENTITY_ID || "http://localhost:3000",
             callbackUrl: process.env.SPID_CALLBACK_URL || "http://localhost:3000/api/auth/spid-callback",
-            certificate: fs.readFileSync(path.join(process.cwd(), 'certs/spid-sp.crt'), 'utf8'),
-            privateCert: fs.readFileSync(path.join(process.cwd(), 'certs/spid-sp.pem'), 'utf8'),
+            certificate: fs.readFileSync(path.join(process.cwd(), 'certs/spid-sp.crt'), 'utf8').toString(),
+            privateCert: fs.readFileSync(path.join(process.cwd(), 'certs/spid-sp.pem'), 'utf8').toString(),
             // "type" deve essere esattamente il literal "public"
             type: "public" as "public",
             // Informazioni di contatto per il supporto tecnico, includendo il campo obbligatorio IPACode
@@ -65,7 +77,10 @@ const spidConfig = {
                 telephone: "+39 0123456789",
                 IPACode: "000000"
             },
-            // Endpoint ACS: array di endpoint dove l'IdP invia le risposte SAML.
+            // Endpoint ACS: Assertion Consumer Service. In pratica, è l'endpoint (cioè l'URL) del Service Provider
+            // dove vengono ricevute le asserzioni SAML dall'Identity Provider dopo che l'utente ha effettuato l'autenticazione.
+            // Questo servizio elabora la risposta (la "asserzione") per verificare l'identità dell'utente e completare il processo di login
+
             // Ora includiamo anche la proprietà "attributes" (vuota se non necessario)
             acs: [{
                 binding: "HTTP-POST" as "HTTP-POST",
@@ -83,9 +98,10 @@ const spidConfig = {
             }
         },
         // In produzione, questo campo conterrà i metadata degli IdP ufficiali; qui lo lasciamo vuoto per il PoC.
-        IDPRegistryMetadata: "",
+        IDPRegistryMetadata:idpMetadata, //"https://localhost:8443/metadata.xml",
         // Funzione per determinare l'IdP da utilizzare basata sulla richiesta.
-        getIDPEntityIdFromRequest: (req: any) => process.env.DEFAULT_IDP_ENTITY_ID || "",
+        // getIDPEntityIdFromRequest: (req: any) => process.env.DEFAULT_IDP_ENTITY_ID || "test",
+        getIDPEntityIdFromRequest: (req:any) => idp,
         // Il livello di autenticazione: deve essere 1, 2 o 3. Forziamo il literal 1.
         authnContext: 1 as 1
     },
