@@ -50,7 +50,7 @@ const spidConfig = {
         }
     },
     // Configura l'IdP con il test IdP
-    // idp: { test: idpTest },
+    idp: { idp },
     saml: {
         callbackUrl: process.env.SPID_CALLBACK_URL || "http://localhost:3000/api/auth/spid-callback",
         authnRequestBinding: "HTTP-Redirect" as "HTTP-Redirect",

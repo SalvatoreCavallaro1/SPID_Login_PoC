@@ -8,9 +8,9 @@ export default function Home() {
     <p>
     Per accedere, effettua il <Link href="/api/auth/login">login con SPID</Link>.
     </p>
-    <p>
-    Visualizza i <Link href="/api/auth/metadata">metadati del Service Provider</Link>.
-    </p>
+    {/*<p>*/}
+    {/*Visualizza i <Link href="/api/auth/metadata">metadati del Service Provider</Link>.*/}
+    {/*</p>*/}
     </div>
 );
 }

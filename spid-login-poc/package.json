@@ -16,7 +16,8 @@
     "passport": "^0.7.0",
     "passport-spid": "^2.0.4",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "xml2js": "^0.6.2"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
